@@ -1,0 +1,131 @@
+﻿@page "/"
+@using BMParts.Data
+@using Microsoft.EntityFrameworkCore
+
+<div style="background:#aaa;margin:1em;">
+    <form @onsubmit=@UpdateDbPath>
+        <label>
+            Your database location:
+            <input @bind-value=@dbPath />
+        </label>
+        <input type="submit" value="Set Database File" />
+    </form>
+</div>
+
+@if (connected)
+{
+    <div style="background:#afc;margin:1em;">
+        <form @onsubmit=@SaveStagedPart>
+            <label>
+                Name
+                <input @bind-value=@staged.Name />
+            </label>
+            <label>
+                Vendor
+                <input @bind-value=@staged.Vendor />
+            </label>
+            <input type="submit" value="Save Part" />
+        </form>
+    </div>
+
+    <div style="background:#acf;margin:1em;">
+        <label>
+            Name Filter
+            <input @oninput=@Filter />
+        </label>
+    </div>
+
+    <table>
+        <tr>
+            <th>Id</th>
+            <th>Name</th>
+            <th>Vendor</th>
+        </tr>
+        @foreach (Part part in parts)
+        {
+            <tr>
+                <td>@part.Id</td>
+                <td>@part.Name</td>
+                <td>@part.Vendor</td>
+                <td><button @onclick="() => Delete(part)">Delete</button></td>
+            </tr>
+        }
+    </table>
+}
+
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        dbPath = await SecureStorage.GetAsync("appDbFilePath");
+        if (File.Exists(dbPath))
+        {
+            using PartsDbContext context = new(dbPath);
+            await UpdateLocalCache(context);
+            connected = true;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private bool connected;
+
+    private string? dbPath;
+
+    private IEnumerable<Part> parts = [];
+
+    private Part staged = new();
+
+    private async Task UpdateLocalCache(PartsDbContext context)
+    {
+        IQueryable<Part> query = context.Parts;
+        if (!string.IsNullOrEmpty(filterValue))
+        {
+            query = query.Where(x => x.Name.Contains(filterValue) || x.Vendor.Contains(filterValue));
+        }
+        parts = await query.ToArrayAsync();
+    }
+
+    private async Task UpdateDbPath()
+    {
+        if (string.IsNullOrEmpty(dbPath))
+        {
+            return;
+        }
+        await SecureStorage.SetAsync("appDbFilePath", dbPath);
+        using PartsDbContext context = new(dbPath);
+        try
+        {
+            context.Database.EnsureCreated();
+            connected = true;
+        }
+        catch
+        {
+            connected = false;
+        }
+    }
+
+    private string? filterValue;
+
+    private async void Filter(ChangeEventArgs e)
+    {
+        filterValue = e.Value as string;
+        using PartsDbContext context = new(dbPath!);
+        await UpdateLocalCache(context);
+    }
+
+    private async Task SaveStagedPart()
+    {
+        using PartsDbContext context = new(dbPath!);
+        context.Parts.Add(staged);
+        await context.SaveChangesAsync();
+        await UpdateLocalCache(context);
+        staged = new();
+    }
+
+    private async Task Delete(Part part)
+    {
+        using PartsDbContext context = new(dbPath!);
+        await context.Parts.Where(x => x.Id == part.Id).ExecuteDeleteAsync();
+        await UpdateLocalCache(context);
+    }
+}
